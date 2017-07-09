@@ -13,14 +13,14 @@ package main
 
 import (
 	"fmt"
-    "github.com/bastengao/bytesparser"
+	"github.com/bastengao/bytesparser"
 )
 
 type Packet struct {
 	Head    []byte `byte:"len:2,equal:0x55AA"`
 	Command uint8  `byte:"len:1"`
 	Len     uint16 `byte:"len:2,endian:little"`
-    Data    []byte `byte:"len:{{.Len}}"`
+	Data    []byte `byte:"len:{{.Len}}"`
 }
 
 func main() {
