@@ -56,3 +56,5 @@ func main() {
 
 * byte escape 
 * nested struct
+* auto detect field length
+* encode struct to bytes
