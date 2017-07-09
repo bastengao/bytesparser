@@ -1,3 +1,4 @@
+// Package bytesparser implements parsing byte buff to struct
 package bytesparser
 
 import (

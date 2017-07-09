@@ -11,7 +11,10 @@ go get github.com/bastengao/bytesparser
 ```go
 package main
 
-import "github.com/bastengao/bytesparser"
+import (
+	"fmt"
+    "github.com/bastengao/bytesparser"
+)
 
 type Packet struct {
 	Head    []byte `byte:"len:2,equal:0x55AA"`
@@ -31,6 +34,25 @@ func main() {
 }
 ```
 
+### "byte" tag options
+
+* `len` indicates length of bytes used to parsing
+
+    can be a number such as `byte:"len:2"`
+
+	can be a expression such as `byte:"len:{{ .AnotherField }}"`
+
+* `endian` indicates bigendian or littleendian. bigendian is default when endian not presents
+   
+   can be `little` or `big` suchas `byte:"endian:little"`
+
+   support uint8, uint16, uint32, uint64, int8, int16, int32, int64 and int(as int32)
+
+* `equal` indicates the field equal specific value
+
+   such as `byte:"equal:0xABCD"`, only support hex format
+
 ## TODO
 
 * byte escape 
+* nested struct
