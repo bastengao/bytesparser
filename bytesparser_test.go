@@ -2,6 +2,7 @@ package bytesparser
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
 )
 
@@ -11,6 +12,19 @@ type SimplePacket struct {
 	Len     uint16 `byte:"len:2,endian:little"`
 	Len2    uint32 `byte:"len:4"`
 	Len3    uint64 `byte:"len:8"`
+}
+
+type DelimiterPacket struct {
+	Head    uint8  `byte:"len:1,equal:0x7E"`
+	Payload []byte `byte:"len:*,escape:Escapes"`
+	Tail    uint8  `byte:"len:1,equal:0x7E"`
+}
+
+func (p DelimiterPacket) Escapes() map[byte][]byte {
+	return map[byte][]byte{
+		0x7D: {0x7D, 0x01},
+		0x7E: {0x7D, 0x02},
+	}
 }
 
 func TestParse(t *testing.T) {
@@ -66,4 +80,23 @@ func TestParseOffset2(t *testing.T) {
 	if offset != NeedMoreBytes {
 		t.Error("failed")
 	}
+}
+
+func TestParseWithDelimiter(t *testing.T) {
+	packet := DelimiterPacket{}
+	offset, err := Parse([]byte{0x7E, 0x7D, 0x02, 0x7D, 0x01, 0x7E}, &packet)
+	if err != nil {
+		fmt.Println(err)
+		t.Error("failed")
+	}
+
+	if offset != 6 {
+		t.Error("failed")
+	}
+
+	if !reflect.DeepEqual(packet.Payload, []byte{0x7E, 0x7D}) {
+		t.Error("failed")
+	}
+
+	fmt.Println(packet)
 }

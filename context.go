@@ -3,6 +3,7 @@ package bytesparser
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"reflect"
 )
@@ -11,23 +12,19 @@ import (
 const (
 	NeedMoreBytes = 0
 	NotMatch      = -1
-
-	Len    = "len"
-	Equal  = "equal"
-	Endian = "endian"
 )
 
 // Context 解析上下文
 type Context struct {
 	Buff     []byte
 	Type     reflect.Type
-	Specs    []FieldSpec
+	Specs    []*FieldSpec
 	Instance interface{}
 }
 
 func newContext(buff []byte, p interface{}) (*Context, error) {
 	// parse all fields
-	var fieldSpecs []FieldSpec
+	var fieldSpecs []*FieldSpec
 	t := reflect.ValueOf(p).Elem().Type()
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
@@ -36,13 +33,13 @@ func newContext(buff []byte, p interface{}) (*Context, error) {
 		if !ok {
 			continue
 		}
-		fieldSpec, err := parseTag(byteTag)
+		fieldSpec, err := parseTag(byteTag, p)
 		fieldSpec.Name = field.Name
 		fieldSpec.Field = field
 		if err != nil {
 			return nil, err
 		}
-		fieldSpecs = append(fieldSpecs, fieldSpec)
+		fieldSpecs = append(fieldSpecs, &fieldSpec)
 	}
 
 	var context = Context{
@@ -57,66 +54,99 @@ func newContext(buff []byte, p interface{}) (*Context, error) {
 // -1 not match
 // 0 match partly
 // > 0 match fully, n present how many bytes matched in buff
-func (c Context) parse() (int, error) {
-	var offset = 0
-	for _, spec := range c.Specs {
-		newOffset, err := c.evaluateByFieldSpec(offset, spec)
-		if err != nil {
-			return newOffset, err
-		}
-
-		offset = newOffset
+func (c *Context) parse() (int, error) {
+	offset, err := c.match()
+	if err != nil {
+		return offset, err
 	}
 
 	return offset, nil
 }
 
-func (c Context) evaluateByFieldSpec(offset int, spec FieldSpec) (int, error) {
-	hasSetValue := false
-	for key, attr := range spec.Attrs {
-		switch key {
-		case Len:
-			l, err := attr.getLen(c)
-			if err != nil {
-				return -1, err
+/*
+测试是否匹配
+可以通过前后可以匹配的字段，算出中间的字段。但是不能解析连续两次都是 !canMatch
+| canMatch | !canMatch | canMatch |
+*/
+func (c Context) match() (int, error) {
+	var offset = 0
+	var prevCanMatch = true
+	for specIndex, spec := range c.Specs {
+		var prevSpec *FieldSpec
+		if specIndex > 0 {
+			prevSpec = c.Specs[specIndex-1]
+			prevCanMatch = prevSpec.canMatch()
+			// 不能连续两次都不能解析
+			if !prevCanMatch && !spec.canMatch() {
+				return -1, fmt.Errorf("could not parse fields %s and %s", prevSpec.Name, spec.Name)
 			}
-			if len(c.Buff) < offset+l {
-				return 0, fmt.Errorf("%s not enough length", spec.Name)
-			}
-		case Equal:
-			end := offset + spec.Attrs[Len].Len
-			if reflect.DeepEqual(c.Buff[offset:end], attr.Equal) {
-				if !hasSetValue {
-					if ok := c.setValue(spec, c.Buff[offset:end]); ok {
-						hasSetValue = true
-					}
+		}
+		if spec.canMatch() {
+			// 如果之前的 field 是可以确定的，则值匹配一次, 否则遍历匹配
+			if prevCanMatch {
+				newOffset, err := spec.isMatch(c, offset)
+				if err != nil {
+					return newOffset, err
+				}
+				spec.Start = offset
+				spec.End = newOffset
+				spec.Bytes = c.Buff[offset:newOffset]
+				offset = newOffset
+				ok := c.setValue(*spec)
+				if !ok {
+					fmt.Println("could not set value")
 				}
 			} else {
-				return -1, fmt.Errorf("[%d:%d] not equal %v", offset, end, attr.Equal)
+				matched := false
+				for i := offset; i < len(c.Buff); i++ {
+					newOffset, err := spec.isMatch(c, i)
+					if err != nil {
+						continue
+					}
+					matched = true
+					spec.Start = i
+					spec.End = newOffset
+					spec.Bytes = c.Buff[offset:newOffset]
+					ok := c.setValue(*spec)
+					if !ok {
+						fmt.Println("could not set value")
+					}
+					offset = newOffset
+					// 确定上一次不能解析字段的结束位置
+					if prevSpec != nil {
+						prevSpec.End = spec.Start
+						prevSpec.Bytes = c.Buff[prevSpec.Start:prevSpec.End]
+						ok := c.setValue(*prevSpec)
+						if !ok {
+							fmt.Println("could not set value")
+						}
+					}
+					break
+				}
+				if !matched {
+					return 0, errors.New("not match")
+				}
 			}
-		}
-
-		if !hasSetValue {
-			l, err := spec.Attrs[Len].getLen(c)
-			if err != nil {
-				return -1, err
+		} else {
+			// 先确定开始位置
+			if prevSpec != nil {
+				spec.Start = prevSpec.End
+			} else {
+				spec.Start = offset
 			}
-			end := offset + l
-
-			buff := c.Buff[offset:end]
-			if ok := c.setValue(spec, buff); ok {
-				hasSetValue = true
-			}
+			continue
 		}
 	}
-
-	// TODO: Len must be set
-	offset = offset + spec.Attrs[Len].Len
 	return offset, nil
 }
 
 // 动态设置值, 根据值类型
-func (c Context) setValue(spec FieldSpec, buff []byte) bool {
+func (c Context) setValue(spec FieldSpec) bool {
+	buff := spec.Bytes
+	if spec.needEscape() {
+		buff = spec.escapedBytes()
+	}
+
 	fieldType := spec.Field.Type
 	value := reflect.ValueOf(c.Instance).Elem().FieldByName(spec.Name)
 

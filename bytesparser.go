@@ -3,7 +3,6 @@ package bytesparser
 
 import (
 	"errors"
-	"fmt"
 	"reflect"
 )
 
@@ -20,11 +19,11 @@ func Parse(buff []byte, p interface{}) (parsedIndex int, err error) {
 		return parsedIndex, nil
 	}
 
-	offset, err := context.parse()
+	offset, err := context.match()
 	if err != nil {
 		return offset, err
 	}
-	fmt.Println(offset)
 
+	parsedIndex = offset
 	return
 }
