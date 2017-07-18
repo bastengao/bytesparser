@@ -161,6 +161,12 @@ func (c Context) setValue(spec FieldSpec) bool {
 		v := toInt64(fieldType.Kind(), bigEndian, buff)
 		value.SetInt(v)
 		return true
+	case reflect.Array:
+		if fieldType.Elem().Kind() == reflect.Uint8 {
+			reflect.Copy(value, reflect.ValueOf(buff))
+			return true
+		}
+		fmt.Printf("array %s not supported yet\n", fieldType.Elem())
 	case reflect.Slice:
 		if fieldType.Elem().Kind() == reflect.Uint8 {
 			value.SetBytes(buff)

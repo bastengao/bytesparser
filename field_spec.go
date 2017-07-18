@@ -194,12 +194,26 @@ func (s FieldSpec) getLen(c Context, offset int) (int, error) {
 		return lenAttr.getLen(c)
 	}
 
-	// TODO: auto detect len
-	// reflect.TypeOf(a).Size()
+	l, err := s.fieldSize()
+	if err == nil {
+		return l, nil
+	}
 
 	return 0, errors.New("could not ensure field length")
 }
 
 func (s FieldSpec) String() string {
 	return fmt.Sprintf("{name: %s, offset: [%d:%d], len: %d}", s.Name, s.Start, s.End, s.End-s.Start)
+}
+
+func (s FieldSpec) fieldSize() (int, error) {
+	switch s.Field.Type.Kind() {
+	case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Int,
+		reflect.Array:
+		return int(s.Field.Type.Size()), nil
+	}
+
+	return 0, fmt.Errorf("%s could not detect field size", s.Field.Type)
 }

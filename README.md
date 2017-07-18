@@ -44,6 +44,8 @@ func main() {
 
 	can be a expression such as `byte:"len:{{ .AnotherField }}"`
 
+	can be optional, could auto detected if field size is definite
+
 * `endian` indicates bigendian or littleendian. bigendian is default when endian not presents
    
    can be `little` or `big` such as `byte:"endian:little"`
@@ -75,10 +77,10 @@ func main() {
 
 * uint8, uint16, uint32, uint64 
 * int8, int16, int32, int64 and int
-* []byte
+* slice []byte or []uint
+* array [n]byte or [n]uint
 
 ## TODO
 
 * nested struct
-* auto detect field length
 * encode struct to bytes
