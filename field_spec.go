@@ -37,6 +37,10 @@ func parseTag(tag string, instance interface{}) (FieldSpec, error) {
 	specs := strings.Split(tag, AttrDelimiter)
 	for _, attr := range specs {
 		strs := strings.Split(attr, keyValueDelimiter)
+		if len(strs) <= 1 {
+			continue
+		}
+
 		k, v := strs[0], strs[1]
 		switch k {
 		case Len:
