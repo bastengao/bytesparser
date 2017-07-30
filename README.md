@@ -18,9 +18,9 @@ import (
 
 type Packet struct {
 	Head    [2]byte `byte:"len:2,equal:0x55AA"`
-	Command uint8  `byte:""`
-	Len     uint16 `byte:"len:2,endian:little"`
-	Data    []byte `byte:"len:{{.Len}}"`
+	Command uint8   `byte:""`
+	Len     uint16  `byte:"len:2,endian:little"`
+	Data    []byte  `byte:"len:{{.Len}}"`
 }
 
 func main() {
@@ -28,7 +28,7 @@ func main() {
 	buff := []byte{ 0x55, 0xAA, 0x01, 0x02, 0x00, 0x03, 0x04 }
 	offset, err := bytesparser.Parse(buff, &packet)
 	if err != nil {
-        fmt.Println(err)
+		fmt.Println(err)
 	}
 	fmt.Println(packet, offset)
 }
@@ -42,7 +42,7 @@ func main() {
 
 	can be a wildcard such as `byte:"len:*"`, that indicates the length is not definite, depends other fields
 
-	can be a expression such as `byte:"len:{{ .AnotherField }}"`
+	can be a expression such as `byte:"len:{{.AnotherField}}"`
 
 	can be optional, could auto detected if field size is definite
 
@@ -79,8 +79,8 @@ func main() {
 * int8, int16, int32, int64 and int
 * slice []byte or []uint
 * array [n]byte or [n]uint
+* nested struct
 
 ## TODO
 
-* nested struct
 * encode struct to bytes

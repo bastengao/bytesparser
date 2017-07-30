@@ -1,20 +1,16 @@
 package bytesparser
 
 import (
-	"encoding/hex"
-	"errors"
 	"fmt"
-	"log"
 	"reflect"
-	"strconv"
 	"strings"
 )
 
 const (
 	// AttrDelimiter 表示属性分隔符
 	AttrDelimiter = ","
-	// keyValueDelimiter 表示键值对分隔符
-	keyValueDelimiter = ":"
+	// KeyValueDelimiter 表示键值对分隔符
+	KeyValueDelimiter = ":"
 )
 
 // FieldSpec 字段参数
@@ -28,84 +24,30 @@ type FieldSpec struct {
 	Start int
 	End   int
 	Bytes []byte
+
+	Context Context
 }
 
 // 解析字段
-func parseTag(tag string, instance interface{}) (FieldSpec, error) {
-	fieldSpec := FieldSpec{}
+func parseTag(tag string, field reflect.StructField, instance interface{}) (FieldSpec, error) {
+	fieldSpec := FieldSpec{Name: field.Name, Field: field}
 	fieldSpec.Attrs = make(map[string]Attr)
 	specs := strings.Split(tag, AttrDelimiter)
-	for _, attr := range specs {
-		strs := strings.Split(attr, keyValueDelimiter)
-		if len(strs) <= 1 {
+	for _, attrStr := range specs {
+		attr, err := newAttr(attrStr, instance)
+		if err != nil {
 			continue
 		}
+		fieldSpec.Attrs[attr.Name] = attr
+	}
 
-		k, v := strs[0], strs[1]
-		switch k {
-		case Len:
-			if v == "*" {
-				fieldSpec.Attrs[Len] = Attr{
-					Name:         Len,
-					IsExplicit:   true,
-					IsExpression: false,
-					Len:          -1,
-				}
-			} else {
-				l, err := strconv.Atoi(v)
-				if err == nil {
-					fieldSpec.Attrs[Len] = Attr{
-						Name:         Len,
-						IsExplicit:   true,
-						IsExpression: false,
-						Len:          l,
-					}
-				} else {
-					// try expression
-					fieldSpec.Attrs[Len] = Attr{
-						Name:         Len,
-						IsExplicit:   true,
-						IsExpression: true,
-						Value:        v,
-					}
-				}
-			}
-		case Equal:
-			if strings.Index(v, "0x") != 0 {
-				return fieldSpec, errors.New("equal only support hex format")
-			}
-
-			src := []byte(v[2:])
-
-			dst := make([]byte, hex.DecodedLen(len(src)))
-			_, err := hex.Decode(dst, src)
-			if err != nil {
-				log.Fatal(err)
-			}
-			fieldSpec.Attrs[Equal] = Attr{
-				Name:       Equal,
-				IsExplicit: true,
-				Equal:      dst,
-			}
-		case Escape:
-			attr := Attr{
-				Name:       Escape,
-				IsExplicit: true,
-				Value:      v,
-			}
-			value, err := attr.getEscape(instance)
-			if err != nil {
-				log.Fatal(err)
-			}
-			attr.Escape = value
-			fieldSpec.Attrs[Escape] = attr
-		default:
-			fieldSpec.Attrs[k] = Attr{
-				Name:       k,
-				IsExplicit: true,
-				Value:      v,
-			}
+	if fieldSpec.isStruct() {
+		value := reflect.ValueOf(instance).Elem().FieldByName(field.Name)
+		c, err := newContext([]byte{}, value.Addr().Interface())
+		if err != nil {
+			return fieldSpec, err
 		}
+		fieldSpec.Context = *c
 	}
 
 	return fieldSpec, nil
@@ -149,6 +91,7 @@ func (s FieldSpec) escapedBytes() []byte {
 		}
 
 		if !matched {
+			escaped = append(escaped, s.Bytes[i])
 			i++
 		}
 	}
@@ -158,18 +101,45 @@ func (s FieldSpec) escapedBytes() []byte {
 
 func (s FieldSpec) canMatch() bool {
 	// 如果 len 是通配符, 则不能直接匹配，需要其他字段匹配完了才能确定
-	if s.Attrs[Len].Len == -1 {
+	if attr, ok := s.Attrs[Len]; ok && attr.Len == WildCardLen {
 		return false
 	}
 
 	return true
 }
 
-func (s FieldSpec) isMatch(c Context, offset int) (int, error) {
-	// TODO: esacpe before
+func (s FieldSpec) lastCanMatch() bool {
+	context := s.Context
+	return context.Specs[len(context.Specs)-1].canMatch()
+}
 
+func (s *FieldSpec) match(c Context, offset int) (int, error) {
+	if s.isStruct() {
+		s.Context.Buff = c.Buff[offset:]
+		newOffset, err := s.Context.match()
+		if err != nil {
+			return newOffset, err
+		}
+		s.Start = offset
+		s.End = offset + newOffset
+		s.Bytes = c.Buff[offset : offset+newOffset]
+		s.Context.Buff = s.Bytes
+		return offset + newOffset, nil
+	} else {
+		newOffset, err := s.basicMatch(c, offset)
+		if err != nil {
+			return newOffset, err
+		}
+		s.Start = offset
+		s.End = newOffset
+		s.Bytes = c.Buff[offset:newOffset]
+		return newOffset, nil
+	}
+}
+
+func (s FieldSpec) basicMatch(c Context, offset int) (int, error) {
 	// match len
-	l, err := s.getLen(c, offset)
+	l, err := s.getLen(c)
 	if err != nil {
 		return l, err
 	}
@@ -192,22 +162,84 @@ func (s FieldSpec) isMatch(c Context, offset int) (int, error) {
 	return offset + l, nil
 }
 
-func (s FieldSpec) getLen(c Context, offset int) (int, error) {
+func (s FieldSpec) getLen(c Context) (int, error) {
 	lenAttr, ok := s.Attrs[Len]
-	if ok && lenAttr.Len != -1 {
+	if ok && lenAttr.Len != WildCardLen {
 		return lenAttr.getLen(c)
 	}
 
-	l, err := s.fieldSize()
-	if err == nil {
-		return l, nil
+	if s.isStruct() {
+		totalLen := 0
+		for _, spec := range s.Context.Specs {
+			l, err := spec.getLen(s.Context)
+			if err != nil {
+				return 0, err
+			}
+			totalLen += l
+		}
+		return totalLen, nil
+	} else {
+		l, err := s.fieldSize()
+		if err == nil {
+			return l, nil
+		}
 	}
 
-	return 0, errors.New("could not ensure field length")
+	return 0, fmt.Errorf("%s could not ensure field length", s.Name)
+}
+
+// 动态设置值, 根据值类型
+func (s FieldSpec) setValue(c Context) bool {
+	buff := s.Bytes
+	if s.needEscape() {
+		buff = s.escapedBytes()
+	}
+
+	fieldType := s.Field.Type
+	value := reflect.ValueOf(c.Instance).Elem().FieldByName(s.Name)
+
+	switch fieldType.Kind() {
+	case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		bigEndian := s.isBigEndian()
+		v := toUint64(fieldType.Kind(), bigEndian, buff)
+		value.SetUint(v)
+		return true
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		bigEndian := s.isBigEndian()
+		v := toInt64(fieldType.Kind(), bigEndian, buff)
+		value.SetInt(v)
+		return true
+	case reflect.Array:
+		if fieldType.Elem().Kind() == reflect.Uint8 {
+			reflect.Copy(value, reflect.ValueOf(buff))
+			return true
+		}
+		fmt.Printf("array %s not supported yet\n", fieldType.Elem())
+	case reflect.Slice:
+		if fieldType.Elem().Kind() == reflect.Uint8 {
+			value.SetBytes(buff)
+			return true
+		}
+
+		fmt.Printf("slice %s not supported yet\n", fieldType.Elem())
+	case reflect.Struct:
+		// set by s.Context.match()
+		return true
+	}
+
+	return false
+}
+
+func (s FieldSpec) isStruct() bool {
+	return s.Field.Type.Kind() == reflect.Struct
 }
 
 func (s FieldSpec) String() string {
-	return fmt.Sprintf("{name: %s, offset: [%d:%d], len: %d}", s.Name, s.Start, s.End, s.End-s.Start)
+	if s.isStruct() {
+		return fmt.Sprintf("{name: %s, type: %s, offset: [%d:%d], len: %d, bytes: %v, specs: %v}", s.Name, s.Field.Type, s.Start, s.End, s.End-s.Start, s.Bytes, s.Context.Specs)
+	} else {
+		return fmt.Sprintf("{name: %s, type: %s, offset: [%d:%d], len: %d, bytes: %v}", s.Name, s.Field.Type, s.Start, s.End, s.End-s.Start, s.Bytes)
+	}
 }
 
 func (s FieldSpec) fieldSize() (int, error) {

@@ -20,6 +20,25 @@ type DelimiterPacket struct {
 	Tail    uint8  `byte:"len:1,equal:0x7E"`
 }
 
+type BigPacket struct {
+	Head       byte       `byte:""`
+	NestPacket NestPacket `byte:""`
+}
+
+type NestPacket struct {
+	Len uint16 `byte:""`
+}
+
+type BigDelimiterPacket struct {
+	Head        byte        `byte:""`
+	Data        []byte      `byte:"len:*"`
+	NestePacket Nest2Packet `byte:""`
+}
+
+type Nest2Packet struct {
+	Len uint16 `byte:"len:2,equal:0x0003"`
+}
+
 func (p DelimiterPacket) Escapes() map[byte][]byte {
 	return map[byte][]byte{
 		0x7D: {0x7D, 0x01},
@@ -99,4 +118,24 @@ func TestParseWithDelimiter(t *testing.T) {
 	}
 
 	fmt.Println(packet)
+}
+
+func TestNestedStruct(t *testing.T) {
+	packet := BigPacket{}
+	offset, err := Parse([]byte{0x01, 0x00, 0x02}, &packet)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	fmt.Println(packet, offset)
+}
+
+func TestNestedDelimiterStruct(t *testing.T) {
+	packet := BigDelimiterPacket{}
+	offset, err := Parse([]byte{0x01, 0x02, 0x00, 0x03}, &packet)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	fmt.Println(packet, offset)
 }
